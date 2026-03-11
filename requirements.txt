@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+streamlit
+langchain==0.1.0
+langchain-openai==0.0.2
+langchain-community==0.0.13
+langchain-core==0.1.10
+chromadb
+pypdf
+pandas
+openpyxl
+python-multipart
+python-dotenv
+tiktoken
