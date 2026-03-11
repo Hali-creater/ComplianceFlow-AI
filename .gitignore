@@ -1,0 +1,11 @@
+node_modules
+.venv
+venv
+__pycache__
+*.pyc
+*.log
+data/
+temp_uploads/
+.env
+chroma.sqlite3
+/home/jules/verification/
