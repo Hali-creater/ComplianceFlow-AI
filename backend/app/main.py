@@ -28,20 +28,28 @@ app.add_middleware(
 )
 
 # Configuration
-# For Zero Data Retention, we use temporary directories or clear them after processing.
 UPLOAD_DIR = "temp_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+DB_DIR = os.path.join(UPLOAD_DIR, "chroma_db")
 
-# Note: We use Chroma in-memory for Zero Data Retention if possible,
-# or clear it after the session. For this MVP, we use a local DB but clear it.
+# Global variables for shared components
+_vectorstore = None
+_embeddings = None
+
+def get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set in environment.")
+        _embeddings = OpenAIEmbeddings(openai_api_key=api_key)
+    return _embeddings
 
 def get_vectorstore():
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set in environment.")
-    embeddings = OpenAIEmbeddings(openai_api_key=api_key)
-    # Using a transient vectorstore would be better for Zero Data Retention
-    return Chroma(embedding_function=embeddings)
+    global _vectorstore
+    if _vectorstore is None:
+        _vectorstore = Chroma(embedding_function=get_embeddings(), persist_directory=DB_DIR)
+    return _vectorstore
 
 def get_llm():
     api_key = os.getenv("OPENAI_API_KEY")
@@ -78,7 +86,6 @@ async def ingest_documents(files: List[UploadFile] = File(...)):
                 with open(file_path, "r") as f:
                     documents.append(Document(page_content=f.read(), metadata={"source": file.filename}))
 
-            # Clean up source file immediately after loading into memory
             os.remove(file_path)
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
@@ -158,7 +165,6 @@ async def process_rfp_excel(background_tasks: BackgroundTasks, file: UploadFile 
             template=prompt_template, input_variables=["context", "question"]
         )
 
-        # Instantiate chain once outside the loop
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             chain_type="stuff",
@@ -180,7 +186,6 @@ async def process_rfp_excel(background_tasks: BackgroundTasks, file: UploadFile 
         output_path = os.path.join(UPLOAD_DIR, output_filename)
         df.to_excel(output_path, index=False)
 
-        # Schedule cleanup of the uploaded and processed files
         background_tasks.add_task(cleanup_files, [file_path, output_path])
 
         return {
@@ -193,11 +198,13 @@ async def process_rfp_excel(background_tasks: BackgroundTasks, file: UploadFile 
 
 @app.post("/clear-data")
 async def clear_data():
-    # Implementation for clearing the vectorstore
-    # For Chroma, we might need to recreate it or delete the collection
+    global _vectorstore
     try:
-        vs = get_vectorstore()
-        vs.delete_collection()
+        if _vectorstore:
+            _vectorstore.delete_collection()
+            _vectorstore = None
+        if os.path.exists(DB_DIR):
+            shutil.rmtree(DB_DIR)
         return {"message": "All ingested data has been deleted."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
