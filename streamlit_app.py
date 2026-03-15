@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 import shutil
-from typing import List
+import json
+import datetime
+from typing import List, Dict
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
@@ -15,11 +17,11 @@ from dotenv import load_dotenv
 # Load local .env if it exists (for local testing)
 load_dotenv()
 
-st.set_page_config(page_title="ComplianceFlow AI", layout="wide")
+st.set_page_config(page_title="ComplianceFlow Pro AI", layout="wide")
 
 # App Title
-st.title("🛡️ ComplianceFlow AI")
-st.subheader("Automate your Security RFPs with AI")
+st.title("🛡️ ComplianceFlow Pro AI")
+st.subheader("Enterprise-Grade Compliance & RFP Automation")
 
 # --- Configuration & State ---
 def get_api_key():
@@ -34,14 +36,19 @@ if not openai_api_key:
     st.warning("⚠️ OpenAI API Key not found. Please add it to your Streamlit Secrets or .env file.")
     st.stop()
 
-# Persistent Directory for Chroma (Local session storage)
 TEMP_DIR = "temp_storage"
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
 
 # Initialize Session State
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+if "audit_log" not in st.session_state:
+    st.session_state.audit_log = []
+if "compliance_rules" not in st.session_state:
+    st.session_state.compliance_rules = [
+        {"id": "R1", "rule": "All customer data must be encrypted at rest using AES-256.", "risk": "High"},
+        {"id": "R2", "rule": "Multi-factor authentication (MFA) must be enforced for all employees.", "risk": "High"},
+        {"id": "R3", "rule": "A SOC2 Type II report must be available for the previous 12 months.", "risk": "Medium"},
+    ]
 if "bulk_results" not in st.session_state:
     st.session_state.bulk_results = None
 if "single_answer" not in st.session_state:
@@ -52,7 +59,6 @@ if "single_answer" not in st.session_state:
 @st.cache_resource
 def get_vectorstore():
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-    # Persist directory is important for keeping data between runs in the same session
     return Chroma(embedding_function=embeddings, persist_directory=os.path.join(TEMP_DIR, "chroma_db"))
 
 def get_llm():
@@ -69,7 +75,11 @@ def process_documents(uploaded_files):
             loader = PyPDFLoader(file_path)
             documents.extend(loader.load())
         else:
-            content = uploaded_file.read().decode("utf-8")
+            # Handle possible encoding issues
+            try:
+                content = uploaded_file.read().decode("utf-8")
+            except:
+                content = uploaded_file.read().decode("latin-1")
             documents.append(Document(page_content=content, metadata={"source": uploaded_file.name}))
 
         os.remove(file_path)
@@ -88,11 +98,31 @@ def clear_data():
     st.cache_resource.clear()
     st.session_state.bulk_results = None
     st.session_state.single_answer = None
+    st.session_state.audit_log = []
 
-# --- Sidebar: Data Ingestion ---
+def log_audit_entry(question, answer, risk_score, rules_applied):
+    st.session_state.audit_log.append({
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "question": question,
+        "answer": answer,
+        "risk_score": risk_score,
+        "rules_applied": rules_applied,
+        "status": "Pending Review"
+    })
+
+# --- Sidebar: System Configuration & Rules ---
 with st.sidebar:
+    st.header("⚙️ System Management")
+
+    with st.expander("📝 Compliance Rules Editor"):
+        rules_df = pd.DataFrame(st.session_state.compliance_rules)
+        edited_rules_df = st.data_editor(rules_df, num_rows="dynamic")
+        if st.button("Save Rules"):
+            st.session_state.compliance_rules = edited_rules_df.to_dict('records')
+            st.success("Rules updated!")
+
+    st.divider()
     st.header("🏢 My Company Data")
-    st.info("Upload your SOC2, security policies, and previous RFP answers to train the AI.")
     uploaded_docs = st.file_uploader("Upload Documents (PDF, TXT)", accept_multiple_files=True, key="docs")
 
     if st.button("Train AI on these docs"):
@@ -100,41 +130,80 @@ with st.sidebar:
             with st.spinner("Ingesting documents..."):
                 try:
                     num_chunks = process_documents(uploaded_docs)
-                    st.success(f"Successfully ingested data! Created {num_chunks} searchable chunks.")
+                    st.success(f"Ingested {len(uploaded_docs)} files! Created {num_chunks} chunks.")
                 except Exception as e:
-                    st.error(f"Error during ingestion: {str(e)}")
+                    st.error(f"Error: {str(e)}")
         else:
             st.warning("Please upload some files first.")
 
     st.divider()
-    if st.button("Clear All Data (Zero Retention)"):
+    if st.button("Reset System (Zero Retention)"):
         clear_data()
-        st.success("All temporary data has been purged.")
+        st.success("All system data has been purged.")
 
 # --- Main App Tabs ---
-tab1, tab2 = st.tabs(["📄 Single Question", "📊 Bulk RFP Excel"])
+tab_dashboard, tab_query, tab_bulk, tab_audit = st.tabs(["📊 Dashboard", "📄 Single Question", "📊 Bulk RFP Excel", "📑 Audit Trail"])
 
-# Tab 1: Single Question Query
-with tab1:
-    st.header("Ask a Security Question")
-    question = st.text_input("Enter a security question (e.g., 'Do you encrypt data at rest?')", key="q_input")
+# Tab: Dashboard
+with tab_dashboard:
+    st.header("Compliance Risk Overview")
+    if not st.session_state.audit_log:
+        st.info("No documents analyzed yet. Start by asking a question or processing an RFP.")
+    else:
+        col1, col2, col3 = st.columns(3)
+        total_checks = len(st.session_state.audit_log)
+        high_risk = len([x for x in st.session_state.audit_log if x["risk_score"] == "High"])
+        pending_review = len([x for x in st.session_state.audit_log if x["status"] == "Pending Review"])
 
-    if st.button("Get Answer", key="single_q"):
+        col1.metric("Total Analysis Requests", total_checks)
+        col2.metric("High Risk Findings", high_risk, delta_color="inverse")
+        col3.metric("Pending Human Reviews", pending_review)
+
+        st.divider()
+        st.subheader("Risk Distribution")
+        risk_counts = pd.DataFrame(st.session_state.audit_log)["risk_score"].value_counts()
+        st.bar_chart(risk_counts)
+
+# Tab: Single Question Query
+with tab_query:
+    st.header("Rule-Based Compliance Check")
+    question = st.text_input("Enter a security question or requirement", key="q_input")
+
+    if st.button("Analyze Compliance", key="single_q"):
         if question:
-            with st.spinner("Searching internal docs..."):
+            with st.spinner("Retrieving relevant rules and documents..."):
                 try:
                     vs = get_vectorstore()
                     llm = get_llm()
 
-                    prompt_template = """
-                    You are an expert Security and Compliance Engineer. Use the following pieces of context to answer the RFP question.
-                    If you don't know the answer based on the context, say "Information not found in internal documents."
-                    Keep the tone professional and concise, typical of a security response.
+                    # Construct a rule-aware prompt
+                    rules_context = json.dumps(st.session_state.compliance_rules, indent=2)
 
-                    Context: {context}
-                    Question: {question}
+                    prompt_template = f"""
+                    You are an expert Security and Compliance Engineer.
 
-                    Helpful Answer:"""
+                    COMPLIANCE RULES:
+                    {rules_context}
+
+                    INSTRUCTIONS:
+                    1. Use the provided context from internal documents to answer the question.
+                    2. Evaluate the answer against the COMPLIANCE RULES.
+                    3. Determine a RISK SCORE (High, Medium, Low).
+                    4. Reference exact document names if found.
+                    5. If no information is found, say "Information not found in internal documents."
+
+                    INTERNAL CONTEXT:
+                    {{context}}
+
+                    QUESTION:
+                    {{question}}
+
+                    FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+                    AI SUGGESTED ANSWER: <answer with citations>
+                    RISK SCORE: <Low|Medium|High>
+                    RULES APPLIED: <rule IDs>
+                    EXPLANATION: <brief reasoning>
+                    """
 
                     PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
                     qa_chain = RetrievalQA.from_chain_type(
@@ -142,43 +211,62 @@ with tab1:
                     )
 
                     result = qa_chain.invoke({"query": question})
-                    st.session_state.single_answer = result["result"]
+                    raw_answer = result["result"]
+
+                    # Simple parsing of the structured response (in a real app, use PydanticOutputParser)
+                    st.session_state.single_answer = raw_answer
+
+                    # Extraction for audit log
+                    risk = "Low"
+                    if "RISK SCORE: High" in raw_answer: risk = "High"
+                    elif "RISK SCORE: Medium" in raw_answer: risk = "Medium"
+
+                    log_audit_entry(question, raw_answer, risk, "Check Rules")
+
                 except Exception as e:
-                    st.error(f"Error fetching answer: {str(e)}")
+                    st.error(f"Error: {str(e)}")
         else:
             st.warning("Please enter a question.")
 
     if st.session_state.single_answer:
-        st.write("### AI Suggested Answer:")
-        edited_answer = st.text_area("Review and Edit AI Answer", value=st.session_state.single_answer, height=200)
-        if st.button("Approve Answer"):
-            st.success("Answer approved!")
-            st.code(edited_answer)
+        st.write("### AI Compliance Analysis")
+        # In a real app we'd split these out nicely
+        st.info(st.session_state.single_answer)
 
-# Tab 2: Bulk RFP Processing
-with tab2:
-    st.header("Bulk RFP Processing")
+        st.divider()
+        st.subheader("Human-in-the-Loop Review")
+        final_decision = st.radio("Decision", ["Approve", "Reject", "Request Changes"])
+        human_notes = st.text_area("Compliance Officer Notes")
+
+        if st.button("Finalize Decision"):
+            if st.session_state.audit_log:
+                st.session_state.audit_log[-1]["status"] = final_decision
+                st.session_state.audit_log[-1]["notes"] = human_notes
+                st.success("Analysis finalized and logged.")
+
+# Tab: Bulk RFP Processing
+with tab_bulk:
+    st.header("Bulk RFP Audit")
     uploaded_rfp = st.file_uploader("Upload RFP Excel sheet", type=["xlsx", "xls"], key="rfp_excel")
 
-    if st.button("Process RFP", key="bulk_proc"):
+    if st.button("Run Bulk Audit", key="bulk_proc"):
         if uploaded_rfp:
-            with st.spinner("Processing entire RFP..."):
+            with st.spinner("Analyzing entire RFP against policies and rules..."):
                 try:
                     df = pd.read_excel(uploaded_rfp)
                     questions = df.iloc[:, 0].tolist()
 
                     vs = get_vectorstore()
                     llm = get_llm()
+                    rules_context = json.dumps(st.session_state.compliance_rules, indent=2)
 
-                    prompt_template = """
-                    You are an expert Security and Compliance Engineer. Use the following pieces of context to answer the RFP question.
-                    If you don't know the answer based on the context, say "Information not found in internal documents."
-                    Keep the tone professional and concise, typical of a security response.
-
-                    Context: {context}
-                    Question: {question}
-
-                    Helpful Answer:"""
+                    prompt_template = f"""
+                    Expert Security Compliance Analysis.
+                    RULES: {rules_context}
+                    CONTEXT: {{context}}
+                    QUESTION: {{question}}
+                    Format: ANSWER: <text> | RISK: <Low|Medium|High>
+                    """
 
                     PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
                     qa_chain = RetrievalQA.from_chain_type(
@@ -186,33 +274,52 @@ with tab2:
                     )
 
                     answers = []
+                    risks = []
                     for q in questions:
                         if pd.isna(q):
-                            answers.append("")
+                            answers.append(""); risks.append("N/A")
                         else:
                             res = qa_chain.invoke({"query": str(q)})
-                            answers.append(res["result"])
+                            parts = res["result"].split("|")
+                            ans = parts[0].replace("ANSWER:", "").strip()
+                            rsk = parts[1].replace("RISK:", "").strip() if len(parts) > 1 else "Unknown"
+                            answers.append(ans)
+                            risks.append(rsk)
+                            log_audit_entry(str(q), ans, rsk, "Bulk Rule Check")
 
                     df['AI_Suggested_Answer'] = answers
+                    df['Compliance_Risk'] = risks
                     st.session_state.bulk_results = df
-                    st.success(f"Processed {len(questions)} questions!")
+                    st.success(f"Audit complete for {len(questions)} requirements.")
                 except Exception as e:
-                    st.error(f"Error processing RFP: {str(e)}")
+                    st.error(f"Error: {str(e)}")
         else:
             st.warning("Please upload an Excel file.")
 
     if st.session_state.bulk_results is not None:
-        st.write("### AI Suggested Answers (Review Below)")
+        st.write("### Audit Results (Review Below)")
         edited_df = st.data_editor(st.session_state.bulk_results)
 
         csv = edited_df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Download Approved RFP as CSV",
+            label="Export Audit Report (CSV)",
             data=csv,
-            file_name="approved_rfp.csv",
+            file_name=f"compliance_audit_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv",
         )
 
+# Tab: Audit Trail
+with tab_audit:
+    st.header("Traceability & Audit Log")
+    if not st.session_state.audit_log:
+        st.info("Log is empty.")
+    else:
+        audit_df = pd.DataFrame(st.session_state.audit_log)
+        st.dataframe(audit_df, use_container_width=True)
+
+        log_csv = audit_df.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Full Audit Trail", log_csv, "audit_trail.csv", "text/csv")
+
 # Footer
 st.markdown("---")
-st.caption("ComplianceFlow AI - Secure & Private RFP Automation | Zero Data Retention Policy Enabled")
+st.caption("ComplianceFlow Pro AI - Enterprise Security Automation | Built for Traceability and Risk Management")
