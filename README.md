@@ -1,25 +1,31 @@
-# ComplianceFlow AI
+---
+title: ComplianceFlow Pro AI
+emoji: 🛡️
+colorFrom: blue
+colorTo: green
+sdk: streamlit
+sdk_version: 1.55.0
+app_file: app.py
+pinned: false
+---
 
-ComplianceFlow AI is a secure RFP automation tool that uses RAG (Retrieval-Augmented Generation) to answer security questionnaires based on your company's documents.
+# ComplianceFlow Pro AI
+
+ComplianceFlow Pro AI is an enterprise-grade secure RFP automation and compliance auditing tool.
 
 ## Features
 
-- **Unified Interface**: One-click deployment to Streamlit Cloud.
-- **Document Ingestion**: Upload SOC2 reports, security policies, and previous RFPs.
-- **AI-Powered Queries**: Ask single security questions and get context-aware answers.
-- **Bulk RFP Processing**: Upload Excel sheets and get AI-suggested answers for all questions.
-- **Zero Data Retention**: Temporary storage is cleared upon request, and data is processed in-memory where possible.
+- **Unified Interface**: Optimized for Hugging Face Spaces and Streamlit Cloud.
+- **Structured Rules Management**: Define and enforce specific compliance rules.
+- **Audit Trail**: Full traceability of AI decisions for auditors.
+- **Risk Dashboard**: High-level visualization of compliance findings.
+- **Zero Data Retention**: Processes data in-memory and provides purging capabilities.
 
-## Deployment to Streamlit Cloud
+## Deployment to Hugging Face Spaces
 
-1. Push this repository to GitHub.
-2. Go to [Streamlit Cloud](https://share.streamlit.io/).
-3. Connect your repository.
-4. Add your `OPENAI_API_KEY` to the **Secrets** section in the Streamlit Cloud dashboard:
-   ```toml
-   OPENAI_API_KEY = "your_openai_api_key_here"
-   ```
-5. Deploy!
+1. Create a new Streamlit Space on [Hugging Face](https://huggingface.co/spaces).
+2. Push this repository to your Space.
+3. Add your `OPENAI_API_KEY` to the **Settings > Variables and Secrets** section of your Space.
 
 ## Local Setup
 
@@ -33,12 +39,5 @@ ComplianceFlow AI is a secure RFP automation tool that uses RAG (Retrieval-Augme
    ```
 3. Run the application:
    ```bash
-   streamlit run streamlit_app.py
+   streamlit run app.py
    ```
-
-## Usage
-
-1. **Ingest Data**: Use the sidebar to upload your company's security documents and click "Train AI".
-2. **Single Question**: Go to the "Single Question" tab to test the AI's knowledge.
-3. **Bulk RFP**: Upload an Excel sheet in the "Bulk RFP Excel" tab and click "Process RFP".
-4. **Human Review**: Edit the AI-suggested answers directly in the app before downloading the final result.
